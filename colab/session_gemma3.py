@@ -146,8 +146,11 @@ def setup() -> None:
     src = hf_hub_download(DATASET, "data/train.jsonl", repo_type="dataset")
     dst.write_bytes(Path(src).read_bytes())
     n = sum(1 for _ in dst.open())
-    record("setup", {"arms": ARMS, "targets": TARGETS, "target_rows": n})
-    status(f"setup done: {n} training rows from {DATASET}; arms {[a for a, _ in ARMS]}")
+    record("setup", {"arms": ARMS, "targets": TARGETS, "target_rows": n, "batch": BATCH,
+                     "eval_limit": LIMIT[1] if LIMIT else None, "full_steps": FULL_STEPS})
+    # Echo the effective scale up front: a leaked F_LIMIT/F_BATCH (e.g. from reusing a dry-run kernel) shows here.
+    status(f"setup done: {n} training rows from {DATASET}; arms {[a for a, _ in ARMS]}; "
+           f"batch {BATCH}, eval limit {LIMIT[1] if LIMIT else 'none'}, max-steps {FULL_STEPS}")
 
 
 def dev_and_select(tag: str, model: str, snaps: dict[str, Path]):
