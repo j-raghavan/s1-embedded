@@ -1,0 +1,25 @@
+# Colab session cells
+
+Each cell runs one GPU session end to end on Google Colab (`colab exec -s <session> -f <cell>`): it keeps the kernel
+busy, logs progress to `/content/session.log`, packs its results, and holds the VM until the results are downloaded.
+Every cell can be dry-run locally with a small model or `tests/mock_vllm.py` through its environment variables.
+
+## The release path
+
+| Cell | What it did for the released model |
+| --- | --- |
+| `session_bos_train.py` | relabelled the training rows with the teacher, trained the LoRA, scored every snapshot on dev, chose step 1500 with `s1.decide.choose_snapshot_ni`, scored it once on test |
+| `session_relabel.py` | regenerated the soft targets published in the dataset, with the training session's exact code bundle |
+| `session_package2.py` | merged the adapter into the base weights, checked the merge on 200 fixed cases, uploaded the weights |
+| `session_release_check.py` | downloaded the published model and checked `examples/quickstart.py`, the model-card snippet and agreement with the saved test answers |
+| `session_vllm_check.py` | downloaded the published model and checked the GPU-server path in `MODEL_CARD.md` (vLLM in bf16 and FP8, the API with `S1_BACKEND=vllm`, its readiness check, JevBench accuracy and per-decision latency) |
+| `session_ollama_chat_check.py` | pulled `jrlabs01/s1` from the Ollama registry and scored the full JevBench test set through the raw path and the default chat path |
+| `session_order_check.py` | scored every JevBench dev and test case in up to three option orders, for `eval/jevbench/order_average.py` and the API's `S1_CHOICE_ORDERS` |
+| `watch_session.sh` | follows a running session's log, with a heartbeat, until it ends |
+
+## Archive
+
+`archive/` holds the cells of earlier, superseded experiments (encoder training, teacher evaluation, decoder pilots,
+the first full runs, the first packaging attempt). They are kept unchanged as the record of what ran, not maintained:
+several use an older snapshot rule (`s1.decide.choose_snapshot`) that the release replaced with the non-inferiority
+rule, and none of them produced the released model.

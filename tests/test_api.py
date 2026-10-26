@@ -1,0 +1,228 @@
+"""The /v1/decisions API: request validation, answer shapes, calibration and health, with the model call stubbed
+out, plus one end-to-end test through the real Ollama client against an in-process mock server."""
+
+import pytest
+
+fastapi = pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+import api.server as server  # noqa: E402
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path):
+    cal = tmp_path / "cal.json"
+    cal.write_text('{"choice": {"temperature": 1.0}, "score": {"temperature": 1.0}, "noul": {"a": 1.0, "b": 0.0}}')
+    monkeypatch.setattr(server, "CALIBRATION", cal)
+
+    def fake_score(client, model, case, fetch=None):
+        assert fetch is server.FETCH  # the API must use the <bos>-prepending fetcher
+        q = case["question"]
+        if q["type"] == "noul":
+            by_key = {"true": 0.8, "false": 0.2}
+        elif q["type"] == "choice":
+            keys = list(q["criteria"])
+            by_key = {k: (0.7 if i == 0 else 0.3 / (len(keys) - 1)) for i, k in enumerate(keys)}
+        else:
+            by_key = {str(i): (0.6 if i == 1 else 0.4 / (len(q["criteria"]) - 1)) for i in range(len(q["criteria"]))}
+        return {"by_key": by_key, "label_mass": 1.0, "calls": 1, "input_tokens": 10}
+
+    monkeypatch.setattr(server, "score_case", fake_score)
+    return TestClient(server.app)
+
+
+def test_all_question_types(client):
+    r = client.post("/v1/decisions", json={"state": {"ticket": "charged twice"}, "questions": {
+        "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "Payments", "tech": "Bugs"}},
+        "urgent": {"type": "noul", "instructions": "Is it urgent?"},
+        "severity": {"type": "score", "instructions": "How severe?", "criteria": ["low", "medium", "high"]}}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] == server.VERSION
+    a = body["answers"]
+    assert a["team"]["choice"] == "billing" and abs(sum(a["team"]["probabilities"].values()) - 1) < 1e-9
+    assert a["urgent"]["noul"] == pytest.approx(0.8)
+    assert a["severity"]["score"] == pytest.approx(0 * 0.2 + 1 * 0.6 + 2 * 0.2)
+
+
+def test_rejects_bad_questions(client):
+    r = client.post("/v1/decisions", json={"state": {}, "questions": {
+        "x": {"type": "choice", "instructions": "?", "criteria": {"only": "one"}}}})
+    assert r.status_code == 422
+
+
+def test_healthz_reports_model_and_version(client, monkeypatch):
+    monkeypatch.setattr(server, "ollama_status", lambda: (True, "ok"))
+    r = client.get("/healthz")
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["version"] == server.VERSION
+
+
+def test_healthz_503_when_ollama_is_down(client, monkeypatch):
+    monkeypatch.setattr(server, "ollama_status", lambda: (False, "Ollama unreachable"))
+    r = client.get("/healthz")
+    assert r.status_code == 503 and r.json()["ok"] is False
+
+
+@pytest.mark.parametrize("bad", ['{"choice": {"temperature": 0}, "score": {"temperature": 1}, "noul": {"a": 1, "b": 0}}',
+                                 '{"choice": {"temperature": 1}, "score": {"temperature": 1}}',
+                                 '{"choice": {"temperature": "NaN"}, "score": {"temperature": 1}, "noul": {"a": 1, "b": 0}}'])
+def test_invalid_calibration_is_reported_not_crashed(client, monkeypatch, tmp_path, bad):
+    cal = tmp_path / "bad.json"
+    cal.write_text(bad)
+    monkeypatch.setattr(server, "CALIBRATION", cal)
+    monkeypatch.setattr(server, "ollama_status", lambda: (True, "ok"))
+    r = client.post("/v1/decisions", json={"state": {}, "questions": {
+        "x": {"type": "choice", "instructions": "?", "criteria": {"a": "A", "b": "B"}}}})
+    assert r.status_code == 500 and "calibration is invalid" in r.json()["detail"]
+    assert client.get("/healthz").status_code == 503
+
+
+def test_missing_yes_no_probability_is_a_502(client, monkeypatch):
+    monkeypatch.setattr(server, "score_case", lambda *a, **k: {"by_key": {"maybe": 1.0}, "input_tokens": 1})
+    r = client.post("/v1/decisions", json={"state": {}, "questions": {"q": {"type": "noul", "instructions": "?"}}})
+    assert r.status_code == 502
+
+
+def test_end_to_end_through_the_ollama_client(monkeypatch, tmp_path):
+    """Real score_case and fetcher against a mock Ollama: the prompt must reach the model with exactly one <bos>."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import run_ollama
+
+    prompts = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = json.dumps({"models": [{"name": f"{server.MODEL}:latest"}]}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            prompts.append(req["prompt"])
+            top = [{"token": " A", "logprob": -0.1}, {"token": " B", "logprob": -2.5}, {"token": " C", "logprob": -4.0}]
+            body = json.dumps({"logprobs": [{"top_logprobs": top}], "prompt_eval_count": 42}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/api/generate"
+    monkeypatch.setattr(run_ollama, "OLLAMA", url)
+    monkeypatch.setattr(server, "OLLAMA", url)
+    cal = tmp_path / "cal.json"
+    cal.write_text('{"choice": {"temperature": 1.0}, "score": {"temperature": 1.0}, "noul": {"a": 1.0, "b": 0.0}}')
+    monkeypatch.setattr(server, "CALIBRATION", cal)
+    try:
+        c = TestClient(server.app)
+        assert c.get("/healthz").status_code == 200
+        r = c.post("/v1/decisions", json={"state": {"ticket": "charged twice"}, "questions": {
+            "team": {"type": "choice", "instructions": "Which team?",
+                     "criteria": {"billing": "Payments", "shipping": "Deliveries", "tech": "Bugs"}}}})
+    finally:
+        httpd.shutdown()
+    assert r.status_code == 200, r.text
+    ans = r.json()["answers"]["team"]
+    assert ans["choice"] == "billing" and abs(sum(ans["probabilities"].values()) - 1) < 1e-9
+    assert prompts and all(p.startswith("<bos>") and not p.startswith("<bos><bos>") for p in prompts)
+    assert prompts[0].endswith("Answer:") and "billing: Payments" in prompts[0]
+
+
+def test_end_to_end_through_the_vllm_client(monkeypatch, tmp_path):
+    """S1_BACKEND=vllm: real score_case and vLLM fetcher against a mock OpenAI-compatible server. The prompt must
+    reach /v1/completions with exactly one <bos>, one token and top logprobs, and /healthz must check /v1/models."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import run_ollama
+
+    served, requests = "j-raghavan/s1-gemma4-26b-decision", []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, body: dict) -> None:
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            assert self.path == "/v1/models"
+            self.reply({"data": [{"id": served}]})
+
+        def do_POST(self):
+            assert self.path == "/v1/completions"
+            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            top = {" A": -2.5, " B": -0.1, " C": -4.0}
+            self.reply({"choices": [{"text": " B", "logprobs": {"top_logprobs": [top]}}], "usage": {"prompt_tokens": 42}})
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    monkeypatch.setattr(server, "BACKEND", "vllm")
+    monkeypatch.setattr(server, "VLLM_URL", url)
+    monkeypatch.setattr(server, "MODEL", served)
+    monkeypatch.setattr(server, "FETCH", run_ollama.vllm_fetcher(url, "<bos>"))
+    cal = tmp_path / "cal.json"
+    cal.write_text('{"choice": {"temperature": 1.0}, "score": {"temperature": 1.0}, "noul": {"a": 1.0, "b": 0.0}}')
+    monkeypatch.setattr(server, "CALIBRATION", cal)
+    try:
+        c = TestClient(server.app)
+        health = c.get("/healthz")
+        r = c.post("/v1/decisions", json={"state": {"ticket": "charged twice"}, "questions": {
+            "team": {"type": "choice", "instructions": "Which team?",
+                     "criteria": {"billing": "Payments", "shipping": "Deliveries", "tech": "Bugs"}}}})
+        monkeypatch.setattr(server, "MODEL", "some-other-model")
+        missing = c.get("/healthz")
+    finally:
+        httpd.shutdown()
+    assert health.status_code == 200 and health.json()["backend"] == "vllm", health.text
+    assert missing.status_code == 503 and "not served by vLLM" in missing.json()["vllm"]
+    assert r.status_code == 200, r.text
+    ans = r.json()["answers"]["team"]
+    assert ans["choice"] == "shipping" and abs(sum(ans["probabilities"].values()) - 1) < 1e-9
+    assert r.json()["usage"]["input_tokens"] == 42
+    prompts = [q["prompt"] for q in requests]
+    assert prompts and all(p.startswith("<bos>") and not p.startswith("<bos><bos>") for p in prompts)
+    assert all(q["model"] == served and q["max_tokens"] == 1 and q["temperature"] == 0 and q["logprobs"] == 20
+               for q in requests)
+    assert prompts[0].endswith("Answer:") and "billing: Payments" in prompts[0]
+
+
+def test_vllm_calibration_file_is_valid(monkeypatch):
+    """The shipped vLLM calibration loads, and was fitted on dev splits only."""
+    monkeypatch.setattr(server, "CALIBRATION", server.ROOT / "api" / "calibration_s1_vllm.json")
+    cal = server.load_calibration()
+    assert all(src.split(":")[0].endswith(("_dev", "_dev2")) for src in cal["fitted_on"])
+
+
+def test_choice_orders_2_averages_the_reversed_order(client, monkeypatch):
+    """S1_CHOICE_ORDERS=2: a choice question is scored as given and reversed, and the two are averaged."""
+    seen = []
+
+    def by_position(client, model, case, fetch=None):  # 0.7 on whichever option is listed first
+        keys = list(case["question"]["criteria"])
+        seen.append(keys)
+        return {"by_key": {k: (0.7 if i == 0 else 0.3 / (len(keys) - 1)) for i, k in enumerate(keys)},
+                "label_mass": 1.0, "calls": 1, "input_tokens": 10}
+
+    monkeypatch.setattr(server, "score_case", by_position)
+    monkeypatch.setattr(server, "CHOICE_ORDERS", 2)
+    r = client.post("/v1/decisions", json={"state": {}, "questions": {
+        "team": {"type": "choice", "instructions": "?", "criteria": {"a": "A", "b": "B", "c": "C"}},
+        "urgent": {"type": "noul", "instructions": "?"}}})
+    assert r.status_code == 200
+    assert seen[:2] == [["a", "b", "c"], ["c", "b", "a"]] and len(seen) == 3  # yes/no stays one pass
+    probs = r.json()["answers"]["team"]["probabilities"]
+    assert probs["a"] == pytest.approx(probs["c"]) and probs["a"] > probs["b"]  # (0.7 + 0.15) / 2 each
+    assert r.json()["usage"]["input_tokens"] == 30
