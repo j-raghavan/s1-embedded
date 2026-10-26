@@ -46,6 +46,11 @@ def load_rows(path: Path) -> tuple[list[dict], list[dict], list[dict]]:
     train, val, unseen = [], [], []
     for line in path.open(encoding="utf-8"):
         r = json.loads(line)
+        # The published dataset (j-raghavan/s1-decision-data) stores state, question and target as JSON strings
+        # for a flat Hub schema; the internal targets files store them as objects. Accept either.
+        for k in ("state", "question", "target"):
+            if isinstance(r[k], str):
+                r[k] = json.loads(r[k])
         n = len(r["question"]["criteria"]) if r["task_type"] != "noul" else 2
         if n > 26:
             continue

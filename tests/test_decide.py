@@ -2,7 +2,6 @@
 snapshot. Predictions come from tests/fixtures/predictions (committed, no case text), so these run in CI.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -112,26 +111,6 @@ def test_non_inferiority_rule_on_known_runs():
     assert best == "pilot1" and rows["failed"]["eligible"] is False and rows["pilot2"]["eligible"] is False
 
 
-def test_release_snapshot_choice_replays():
-    """The rule the training session applied on dev must pick step 1500, the released snapshot, and agree with the
-    session's own record (results/bostrain_session/decisions.json). The untuned reference is the session's own dev
-    scoring of the untuned model, saved as base-bos-vllm-2."""
-    base_c, base_j = preds("custom_dev2", "base-bos-vllm-2"), preds("jevbench_dev", "base-bos-vllm-2")
-    cands = {s: (preds("custom_dev2", f"bos-{s}-vllm"), preds("jevbench_dev", f"bos-{s}-vllm")) for s in SNAPSHOTS}
-    best, report = choose_snapshot_ni(base_c, base_j, cands)
-    assert best == "F-step-1500"
-    session = json.loads((Path(__file__).resolve().parents[1] / "results/bostrain_session/decisions.json").read_text())
-    recorded = {r["name"]: r for r in session["final"]["report"]}
-    assert session["final"]["best"] == best
-    for row in report:
-        rec = recorded[row["name"]]
-        assert row["eligible"] == rec["eligible"], row["name"]
-        assert row["jev_acc"] == pytest.approx(rec["jev_acc"], abs=1e-9), row["name"]
-        assert row["custom_change"] == pytest.approx(rec["custom_change"], abs=1e-9), row["name"]
-
-
-def test_release_session_uses_the_non_inferiority_rule():
-    """The session that trained the released model must select with choose_snapshot_ni, not the older rule."""
-    src = (Path(__file__).resolve().parents[1] / "colab" / "session_bos_train.py").read_text()
-    assert "choose_snapshot_ni(" in src
-    assert "choose_snapshot(" not in src.replace("choose_snapshot_ni(", "")
+# The 26B release-replay tests (snapshot choice against results/bostrain_session, and the session-script rule
+# invariant) lived here in the parent project. They are re-added against s1-embedded's own Gemma 3 training
+# session and its recorded decisions once that session has run.
