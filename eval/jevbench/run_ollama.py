@@ -44,10 +44,10 @@ GEMMA4_PROMPT = "<|turn>user\n{user}<turn|>\n<|turn>model\n<|channel>thought\n<c
 HARMONY_PROMPT = ("<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\n"
                   "Reasoning: low\n\n# Valid channels: analysis, commentary, final. Channel must be included for every "
                   "message.<|end|><|start|>user<|message|>{user}<|end|><|start|>assistant<|channel|>final<|message|>")
-# Gemma 3 turn format (student). HYPOTHESIS, to be verified in pre-flight against google/gemma-3-1b-it's
-# chat_template.jinja with add_generation_prompt=True: Gemma 3 has no "thought" channel, so the reply opens
-# straight after the model turn. If the environment's Gemma 3 spells its turn tokens differently, correct
-# this string from the rendered template before any training run. See docs/plan.md (pre-flight step 1).
+# Gemma 3 turn format (student), from google/gemma-3-1b-it's chat_template with add_generation_prompt=True
+# (verified 2026-10-26: <bos><start_of_turn>user\n{user}<end_of_turn>\n<start_of_turn>model\n). The leading
+# <bos> is left out here and prepended by the callers (last_logits, and the vLLM/Ollama fetchers), as for
+# gemma4. Gemma 3 has no "thought" channel, so the reply opens straight after the model turn.
 GEMMA3_PROMPT = "<start_of_turn>user\n{user}<end_of_turn>\n<start_of_turn>model\n"
 TEMPLATES = {"gemma4": GEMMA4_PROMPT, "gemma3": GEMMA3_PROMPT, "harmony": HARMONY_PROMPT}
 
