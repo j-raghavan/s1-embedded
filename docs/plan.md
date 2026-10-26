@@ -55,18 +55,32 @@ A 1B student will land below the 26B's 0.808 — that's expected and fine. The b
 - Hold the custom structured-decision usefulness (the 26B is at 0.981 calibrated).
 - Chosen on the dev splits only, by a rule fixed before the test set is touched — same discipline as the parent.
 
-## The one paid Colab run
+## The one paid Colab run (two arms)
 
-Train the 1B LoRA on the published targets (same policy / injection mix), dev-select the snapshot, score the JevBench
-test subset and the custom set once. A 1B dense model fits comfortably on the cheaper A100 40GB, so this is far lighter
-than any 26B run in the parent's compute log. Rough estimate ~3–6 units; pinned after the smoke test and confirmed
-before launch.
+`colab/session_gemma3.py` runs both students in one session: for each of `google/gemma-3-1b-it` and
+`google/gemma-3-270m-it`, LoRA-train on the published targets (downloaded from the dataset in setup, no relabel),
+snapshot, score the untuned student and every snapshot on jevbench_dev + custom_dev2 through HF, dev-select with
+`decide.choose_snapshot_ni`, and score the chosen snapshot and the untuned student once on the jevbench + custom test
+sets. HF scoring only — no vLLM, since these models are small. Per-arm wall-clock is bounded by `--max-minutes`
+(the trainer fits its step count into 85% of the budget), so the paid time is capped.
+
+Small dense models fit comfortably on the cheaper A100 40GB. Estimate for both arms ~7–12 units.
+
+**Gate before the full run:** a cheap Colab dry run with `F_FULL_STEPS`/`F_ARM_MINUTES`/`F_LIMIT` small, to exercise
+the whole flow (download → train → dev scoring → selection → test) end to end for a few minutes and confirm the eval
+wiring and the per-step timing before committing the budget.
+
+### Pre-flight results (2026-10-26, local, free)
+
+All green. Template matches the real `chat_template`; `" A".." Z"` single-token; `<bos>` id 2 added with
+`add_special_tokens=True`. Smoke trains exit 0 with LoRA attached: 1B 52.2M trainable (4.96%), 270M-it 15.2M (5.36%).
+`load_rows` validated over all 101,292 published rows. Watcher dry-run filters/heartbeats/exits correctly.
 
 ## Open decisions
 
 - **LoRA vs full fine-tune.** For a 1B student a full fine-tune is feasible and may distil better than LoRA. I'll run
   LoRA first (reuses the machinery, directly comparable to the 26B) and treat full FT as the next lever.
 - **A dedicated decision head** (score each option from the final hidden state) instead of the letter-logit readout is
-  the fallback if the letter-readout 1B misses the gate — it's more robust for a small model but breaks apples-to-apples
-  comparison and needs its own serving path.
-- **Gemma 3 270M** as a cheaper A/B in the same session, if there's budget headroom.
+  the fallback if the letter-readout students miss the gate — it's more robust for a small model but breaks
+  apples-to-apples comparison and needs its own serving path.
+- **Gemma 3 270M** is confirmed as a second arm in the same session (A/B against the 1B).

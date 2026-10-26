@@ -24,7 +24,16 @@ models:
     use: train
     organisation: Google
     license: Apache-2.0
-    status: pending
+    status: verified
+    source: config and tokenizer downloaded from the Hub under the accepted Gemma licence (2026-10-26)
+  - name: Gemma 3 270M
+    hub_id: google/gemma-3-270m-it
+    role: second student arm for s1-embedded; the smallest on-device decoder, distilled from the same teacher soft targets (A/B against Gemma 3 1B)
+    use: train
+    organisation: Google
+    license: Apache-2.0
+    status: verified
+    source: config and tokenizer downloaded from the Hub under the accepted Gemma licence (2026-10-26)
   - name: Gemma 4 31B
     hub_id: google/gemma-4-31B-it
     role: candidate teacher, measured zero-shot; not used for the released model
