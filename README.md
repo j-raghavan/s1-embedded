@@ -1,9 +1,10 @@
 # s1-embedded
 
 I built [s1](https://github.com/j-raghavan/s1-decision-model) as a calibrated System One decision model: fast typed
-decisions (`choice`, `score`, `yes/no`) over text or JSON, each with a calibrated probability, from a single forward
-pass with no text generated. That model is a LoRA fine-tune of Gemma 4 26B-A4B — accurate, but far too big to run on a
-phone or a laptop.
+decisions (`choice`, `score`, `yes/no`) over text or JSON, each with a calibrated probability, read from the model's
+logits with no text generated — one forward pass for questions with up to 26 options, and a few passes more for the
+rare question with dozens of options, which is scored digit by digit. That model is a LoRA fine-tune of Gemma 4
+26B-A4B — accurate, but far too big to run on a phone or a laptop.
 
 This repo is where I try to shrink it. I keep the same teacher and the same training data, and swap the student for
 **`google/gemma-3-1b-it`** — a dense, text-only, on-device decoder about 26× smaller than the teacher. The question I

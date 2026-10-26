@@ -1,4 +1,4 @@
-"""Decision model on a Gemma 3 decoder: one forward pass, read the option-letter logits.
+"""Decision model on a Gemma 3 decoder: read the option-letter logits, no text generated.
 
 The student is the small, on-device google/gemma-3-1b-it, distilled from the Gemma 4 26B-A4B teacher's
 soft targets (the same labels the 26B model trained on; dataset j-raghavan/s1-decision-data). The decision
@@ -6,8 +6,12 @@ distribution is a softmax over the option-letter tokens at the last position: no
 The prompt is rendered in Gemma 3's own turn format (eval/jevbench/run_ollama.py, template "gemma3"), with
 the reply prefilled with "Answer:" so the model answers in one token.
 
-Questions with more than 26 options use two-digit codes, read in two passes (first digit, then second
-digit given the first).
+Up to 26 options fit the letters A-Z and are scored in a single forward pass. Questions with more than 26
+options are labelled with two-digit codes (10, 11, ...) and read digit by digit: one pass for the first
+digit, then one more pass per plausible first digit to read the second. A 77-option question (JevBench's
+banking77) therefore costs up to nine passes, not one -- so scoring the 1,700-case JevBench subset, whose
+200 banking77 cases each take several passes, runs the model about 2,600 times. It is still one decision
+per question: the extra passes only read a wider distribution from the logits, never a second answer.
 
 Training uses LoRA on the attention and dense-MLP projections. Gemma 3 1B is a plain dense decoder (no
 mixture-of-experts, no vision or audio towers), so every projection is adaptable.
