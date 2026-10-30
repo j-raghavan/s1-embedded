@@ -28,6 +28,8 @@ training), `eval-only` (measurement only).
 | Name | Use | Role | Organisation | Licence |
 | --- | --- | --- | --- | --- |
 | Gemma 4 26B-A4B ([`google/gemma-4-26B-A4B-it`](https://huggingface.co/google/gemma-4-26B-A4B-it)) | train | base model of the released s1 weights, and the teacher whose soft targets the fine-tune was trained on | Google | Apache-2.0 |
+| Gemma 3 1B ([`google/gemma-3-1b-it`](https://huggingface.co/google/gemma-3-1b-it)) | train | student base model for s1-embedded; the small on-device decoder distilled from the Gemma 4 26B-A4B teacher's soft targets | Google | Apache-2.0 |
+| Gemma 3 270M ([`google/gemma-3-270m-it`](https://huggingface.co/google/gemma-3-270m-it)) | train | second student arm for s1-embedded; the smallest on-device decoder, distilled from the same teacher soft targets (A/B against Gemma 3 1B) | Google | Apache-2.0 |
 | ModernBERT-large ([`answerdotai/ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-large)) | train | backbone of the earlier encoder (s1 v1-v3); not part of the released model | Answer.AI / LightOn | Apache-2.0 |
 
 ## Models used as teacher or generator

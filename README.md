@@ -6,13 +6,36 @@ logits with no text generated — one forward pass for questions with up to 26 o
 rare question with dozens of options, which is scored digit by digit. That model is a LoRA fine-tune of Gemma 4
 26B-A4B — accurate, but far too big to run on a phone or a laptop.
 
-This repo is where I try to shrink it. I keep the same teacher and the same training data, and swap the student for
-**`google/gemma-3-1b-it`** — a dense, text-only, on-device decoder about 26× smaller than the teacher. The question I
-want to answer is simple: how much of the 26B model's decision quality survives distillation into a 1B student small
-enough to run anywhere.
+This repo is where I shrink it. I keep the same teacher and the same training data, and swap the student for a tiny
+on-device decoder: **`google/gemma-3-1b-it`** (about 26× smaller than the teacher), with **`google/gemma-3-270m-it`**
+as a second, even smaller arm. The question is simple: how much of the 26B model's decision quality survives
+distillation into a student small enough to run anywhere.
 
-This is early, hands-on research. There are **no benchmark results yet** — when there are, they'll live here with the
-same held-out, dev-selected discipline as the parent project.
+The answer, measured with the same held-out, dev-selected discipline as the parent project: **the 1B student clears the
+bar; the 270M does not.**
+
+## Results
+
+Held-out test, scored with the parent project's scorer and per-task calibration — JevBench (1,700 cases) and my custom
+structured-decision set (1,200). The bar to beat is **0.492** on JevBench, the score of the encoder line I abandoned
+before moving to decoders.
+
+| Student | JevBench | custom decisions | over the bar? |
+| --- | ---: | ---: | :---: |
+| `gemma-3-1b-it`, untuned | 0.375 | 0.428 | — |
+| **`gemma-3-1b-it`, distilled** | **0.507** | **0.630** | ✅ |
+| `gemma-3-270m-it`, untuned | 0.351 | 0.351 | — |
+| `gemma-3-270m-it`, distilled | 0.424 | 0.372 | ❌ |
+| *Gemma 4 26B-A4B teacher, for scale* | *~0.81* | — | — |
+
+Distillation lifts the 1B student's structured-decision usefulness by **+20 points** and carries its JevBench from 0.375
+to 0.507, over the bar. It helps the 270M too (+7 points on JevBench) but not enough: at that capacity and training
+budget the 270M stays under the line. Both students reached these numbers at well under one epoch of training. The 1B is
+published; the 270M stands as the honest negative half of the A/B. The teacher still scores far higher — so this is a
+tiny student that beats the baseline, not one that matches the teacher.
+
+The published 1B adapter lives at
+**[j-raghavan/s1-gemma3-1b-decision](https://huggingface.co/j-raghavan/s1-gemma3-1b-decision)**.
 
 ## The idea in one paragraph
 
@@ -37,11 +60,13 @@ held-out sets. The HTTP surface stays a decision endpoint (`POST /v1/decisions`)
 
 ## Status
 
-Scaffolding and the Gemma 3 code path are in place; the prompt format and tokenizer behaviour are being verified against
-the real `google/gemma-3-1b-it` before any training. See [docs/plan.md](docs/plan.md) for exactly where things stand.
+Trained and measured. The 1B student is distilled, selected on held-out dev sets, tested and published; the 270M arm is
+trained and measured too, and lands under the bar. See [docs/plan.md](docs/plan.md) for the full plan and
+[COMPUTE_LOG.md](COMPUTE_LOG.md) for every paid run that got here.
 
 ## Relationship to s1
 
+- **Published 1B student:** [j-raghavan/s1-gemma3-1b-decision](https://huggingface.co/j-raghavan/s1-gemma3-1b-decision)
 - **Parent project:** [j-raghavan/s1-decision-model](https://github.com/j-raghavan/s1-decision-model)
 - **Teacher model:** [j-raghavan/s1-gemma4-26b-decision](https://huggingface.co/j-raghavan/s1-gemma4-26b-decision)
 - **Training data (shared):** [j-raghavan/s1-decision-data](https://huggingface.co/datasets/j-raghavan/s1-decision-data)
